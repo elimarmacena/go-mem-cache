@@ -1,61 +1,76 @@
 package cache
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
 
 type (
 	// base structure for the cache usage.
-	Cache struct {
-		data   map[string]any
+	CacheTTL struct {
+		data   map[string]item
 		signal sync.Mutex
 	}
 	// structure used to create item with life cycle.
-	ExpireItem struct {
-		data   any
+	item struct {
+		value  any
 		expiry time.Time
 	}
 )
 
-func (c *Cache) SetWithTTL(key string, ttl time.Duration, value any) {
-	item := ExpireItem{
-		data:   value,
+// ---- CacheTTL
+
+// Set - Creates a new entry into the cache given the key, ttl and value.
+//
+// The operaion it is thread safe, once that uses operation lock.
+func (c *CacheTTL) Set(key string, ttl time.Duration, value any) {
+	item := item{
+		value:  value,
 		expiry: time.Now().Add(ttl),
 	}
-	c.Set(key, item)
-}
 
-func (c *Cache) Set(key string, data any) {
 	c.signal.Lock()
-	c.data[key] = data
+	c.data[key] = item
 	c.signal.Unlock()
 }
 
-func (c Cache) Get(key string) any {
-	if data, exists := c.data[key]; exists {
-		return data
+// Get- searchs for key and verify the TTL.
+// When TTL is expired, an error is raised.
+func (c CacheTTL) Get(key string) (any, error) {
+	if item, exists := c.data[key]; exists && item.HasExpired() {
+		return item.value, nil
+	} else if exists {
+		return nil, expiredItemError
 	}
-	return nil
+	return nil, nil
 }
 
-func (c *Cache) Delete(key string) error {
+// Delete - searchs a key into the cache and then remove the value.
+// If no key is found, an error is raised.
+//
+// The operaion it is thread safe, once that uses operation lock.
+func (c *CacheTTL) Delete(key string) error {
 	c.signal.Lock()
 	if _, exists := c.data[key]; !exists {
-		return fmt.Errorf("key [%s] does not exists", key)
+		return keyNotFound
 	}
 	delete(c.data, key)
 	c.signal.Unlock()
 	return nil
 }
 
-func (c *Cache) Clear() {
+// Clear - removes all keys available in the cache.
+//
+// The operaion it is thread safe, once that uses operation lock.
+func (c *CacheTTL) Clear() {
 	c.signal.Lock()
 	c.data = nil
 	c.signal.Unlock()
 }
 
-func (e ExpireItem) HasExpired() bool {
-	return time.Now().After(e.expiry)
+// ---- item
+
+// HasExpired - checks if the current TTL is expired.
+func (e item) HasExpired() bool {
+	return e.expiry.After(time.Now())
 }
